@@ -1,0 +1,1696 @@
+openapi: 3.1.0
+info:
+  title: Helpdesk API
+  description: |
+    Multi-tenant helpdesk and ticketing API.
+
+    * Log in with `POST /api/v1/auth/login`, then click **Authorize** and paste the `accessToken`.
+    * The organization is always taken from the token — the API never accepts an organization id.
+    * Resources outside your visibility (another organization, another customer's ticket) return **404**, not 403.
+    * All errors are RFC 7807 Problem Details (`application/problem+json`) with a stable `code` field.
+  contact:
+    name: Helpdesk team
+  license:
+    name: Proprietary
+  version: v1
+servers:
+- url: /
+  description: This server
+security:
+- bearerAuth: []
+tags:
+- name: History
+  description: "Audit trail of status, assignment and priority changes"
+- name: Users
+  description: User management inside the caller's organization (ORG_ADMIN only)
+- name: Organization
+  description: The caller's own organization
+- name: Comments
+  description: Public replies and internal notes on a ticket
+- name: Tickets
+  description: "Create, search, update, assign and move tickets through their workflow"
+- name: Auth
+  description: "Organization registration, login and the current user"
+paths:
+  /api/v1/tickets/{ticketId}/status:
+    put:
+      tags:
+      - Tickets
+      summary: Change status (including close and reopen)
+      description: Must follow the state machine. Customers may close their own ticket
+        and reopen it when RESOLVED.
+      operationId: changeStatus
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeStatusRequest"
+        required: true
+      responses:
+        "403":
+          description: The transition exists but this role may not make it
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: INVALID_STATUS_TRANSITION
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets/{ticketId}/assignee:
+    put:
+      tags:
+      - Tickets
+      summary: "Assign the ticket (ORG_ADMIN, AGENT)"
+      description: Assignee must be an active AGENT or ORG_ADMIN in your organization.
+        Re-assigning to the current assignee is a no-op.
+      operationId: assign
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignTicketRequest"
+        required: true
+      responses:
+        "400":
+          description: INVALID_ASSIGNEE
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: Caller is a CUSTOMER
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: TICKET_CLOSED
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      tags:
+      - Tickets
+      summary: "Unassign the ticket (ORG_ADMIN, AGENT)"
+      description: Returns 200 with the ticket so the client gets the new version.
+      operationId: unassign
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/users:
+    get:
+      tags:
+      - Users
+      summary: List and search users
+      description: "`q` searches name and email. Sort fields: fullName, email, role,\
+        \ createdAt, active."
+      operationId: list
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: role
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+      - name: active
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: page
+        in: query
+        description: Zero-based page index (0..N)
+        required: false
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      - name: size
+        in: query
+        description: The size of the page to be returned
+        required: false
+        schema:
+          type: integer
+          default: 20
+          minimum: 1
+      - name: sort
+        in: query
+        description: "Sorting criteria in the format: property,(asc|desc). Default\
+          \ sort order is ascending. Multiple sort criteria are supported."
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseUserSummary"
+        "403":
+          description: Caller is not an ORG_ADMIN
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    post:
+      tags:
+      - Users
+      summary: "Create a user (agent, customer or admin)"
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDetail"
+        "409":
+          description: EMAIL_ALREADY_EXISTS
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: Caller is not an ORG_ADMIN
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets:
+    get:
+      tags:
+      - Tickets
+      summary: "Search, filter and paginate tickets"
+      description: "Customers only ever see their own tickets. Sort fields: createdAt,\
+        \ updatedAt, number, priority, status. Default sort: createdAt,desc. Max page\
+        \ size 100."
+      operationId: search
+      parameters:
+      - name: q
+        in: query
+        description: Matches subject or description (case-insensitive); a number also
+          matches the ticket number
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        description: One or many; repeat the parameter or use a comma list
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - OPEN
+            - IN_PROGRESS
+            - ON_HOLD
+            - RESOLVED
+            - CLOSED
+      - name: priority
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+            enum:
+            - LOW
+            - MEDIUM
+            - HIGH
+            - URGENT
+      - name: assigneeId
+        in: query
+        description: Ignored for customers
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: unassigned
+        in: query
+        description: Only unassigned tickets; cannot be combined with assigneeId
+        required: false
+        schema:
+          type: boolean
+          default: false
+      - name: requesterId
+        in: query
+        description: Agents and admins only; forced to the caller for customers
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: createdFrom
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: createdTo
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: page
+        in: query
+        description: Zero-based page index (0..N)
+        required: false
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      - name: size
+        in: query
+        description: The size of the page to be returned
+        required: false
+        schema:
+          type: integer
+          default: 20
+          minimum: 1
+      - name: sort
+        in: query
+        description: "Sorting criteria in the format: property,(asc|desc). Default\
+          \ sort order is ascending. Multiple sort criteria are supported."
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+      responses:
+        "400":
+          description: "INVALID_SORT, MALFORMED_REQUEST or VALIDATION_FAILED"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseTicketSummary"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    post:
+      tags:
+      - Tickets
+      summary: Create a ticket
+      description: Status starts as OPEN; priority defaults to MEDIUM. Agents and
+        admins may set `requesterId` to raise a ticket for a customer.
+      operationId: create_1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTicketRequest"
+        required: true
+      responses:
+        "201":
+          description: Created; Location header points to the ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "400":
+          description: VALIDATION_FAILED or INVALID_REQUESTER
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: A customer sent requesterId
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets/{ticketId}/comments:
+    get:
+      tags:
+      - Comments
+      summary: List comments (oldest first)
+      description: INTERNAL notes are never returned to customers.
+      operationId: list_1
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        description: Zero-based page index (0..N)
+        required: false
+        schema:
+          type: integer
+          default: 0
+          minimum: 0
+      - name: size
+        in: query
+        description: The size of the page to be returned
+        required: false
+        schema:
+          type: integer
+          default: 50
+          minimum: 1
+      - name: sort
+        in: query
+        description: "Sorting criteria in the format: property,(asc|desc). Default\
+          \ sort order is ascending. Multiple sort criteria are supported."
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseCommentResponse"
+        "404":
+          description: Ticket not visible to the caller
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    post:
+      tags:
+      - Comments
+      summary: Add a public reply or an internal note
+      operationId: add
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentResponse"
+        "403":
+          description: A customer tried to post an INTERNAL note
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: TICKET_CLOSED
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Ticket not visible to the caller
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/auth/register-organization:
+    post:
+      tags:
+      - Auth
+      summary: "Register a new organization and its first ORG_ADMIN, then log in"
+      operationId: register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterOrganizationRequest"
+        required: true
+      responses:
+        "201":
+          description: Organization created; body is the same as login
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "409":
+          description: SLUG_ALREADY_EXISTS
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /api/v1/auth/login:
+    post:
+      tags:
+      - Auth
+      summary: "Exchange organization slug, email and password for a JWT"
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+        required: true
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: INVALID_CREDENTIALS — same response for every failure
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+      security: []
+  /api/v1/users/{userId}:
+    get:
+      tags:
+      - Users
+      summary: Get a user
+      operationId: get
+      parameters:
+      - name: userId
+        in: path
+        description: User id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "404":
+          description: No such user in your organization
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDetail"
+        "403":
+          description: Caller is not an ORG_ADMIN
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    patch:
+      tags:
+      - Users
+      summary: "Change name, role or active flag"
+      description: Requires the current `version`.
+      operationId: update
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+        required: true
+      responses:
+        "409":
+          description: "CONCURRENT_MODIFICATION, LAST_ADMIN or SELF_DEACTIVATION"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDetail"
+        "403":
+          description: Caller is not an ORG_ADMIN
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets/{ticketId}:
+    get:
+      tags:
+      - Tickets
+      summary: Get a ticket
+      description: Includes `allowedTransitions` and `permissions` for the caller.
+      operationId: get_1
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "404":
+          description: "No such ticket, another organization's, or another customer's"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    patch:
+      tags:
+      - Tickets
+      summary: "Update subject, description or priority"
+      description: Requires `version`. Customers may edit only subject/description
+        of their own OPEN ticket.
+      operationId: update_1
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTicketRequest"
+        required: true
+      responses:
+        "403":
+          description: Field or state not editable by this role
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Ticket not visible
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: CONCURRENT_MODIFICATION or TICKET_CLOSED
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketDetail"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/organization:
+    get:
+      tags:
+      - Organization
+      summary: Get the current organization
+      operationId: get_2
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationResponse"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    patch:
+      tags:
+      - Organization
+      summary: Rename the organization (ORG_ADMIN)
+      description: The slug cannot be changed.
+      operationId: rename
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrganizationRequest"
+        required: true
+      responses:
+        "200":
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationResponse"
+        "403":
+          description: Not an org admin
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets/{ticketId}/history:
+    get:
+      tags:
+      - History
+      summary: "Ticket history (oldest first, at most 500 entries)"
+      operationId: list_2
+      parameters:
+      - name: ticketId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "404":
+          description: Ticket not visible to the caller
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEntryResponse"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/tickets/stats:
+    get:
+      tags:
+      - Tickets
+      summary: "Ticket counters for a dashboard (ORG_ADMIN, AGENT)"
+      operationId: stats
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TicketStats"
+        "401":
+          description: Missing or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/customers:
+    get:
+      tags:
+      - Users
+      summary: "Active customers, for raising a ticket on their behalf"
+      operationId: customers
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserOption"
+        "403":
+          description: Caller is a CUSTOMER
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/auth/me:
+    get:
+      tags:
+      - Auth
+      summary: The current user and their organization
+      operationId: me
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/agents:
+    get:
+      tags:
+      - Users
+      summary: Active users tickets can be assigned to (AGENT and ORG_ADMIN)
+      operationId: agents
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserOption"
+        "403":
+          description: Caller is a CUSTOMER
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: INTERNAL_ERROR — unexpected error; details only in the server
+            log
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+components:
+  schemas:
+    ChangeStatusRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - ON_HOLD
+          - RESOLVED
+          - CLOSED
+          example: RESOLVED
+        comment:
+          type: string
+          description: Optional; added as a PUBLIC comment in the same transaction
+          example: Fixed SMTP configuration.
+          maxLength: 5000
+          minLength: 0
+      required:
+      - status
+    TicketDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          format: int64
+        subject:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - ON_HOLD
+          - RESOLVED
+          - CLOSED
+        priority:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - URGENT
+        requester:
+          $ref: "#/components/schemas/TicketUser"
+        assignee:
+          $ref: "#/components/schemas/TicketUser"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+          description: Send back on PATCH for optimistic locking
+        allowedTransitions:
+          type: array
+          description: Statuses this caller may move the ticket to
+          items:
+            type: string
+            enum:
+            - OPEN
+            - IN_PROGRESS
+            - ON_HOLD
+            - RESOLVED
+            - CLOSED
+        permissions:
+          $ref: "#/components/schemas/TicketPermissions"
+          description: What this caller may do with the ticket
+    TicketPermissions:
+      type: object
+      properties:
+        canEdit:
+          type: boolean
+        canChangePriority:
+          type: boolean
+        canAssign:
+          type: boolean
+        canAddInternalNote:
+          type: boolean
+        canComment:
+          type: boolean
+    TicketUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+    AssignTicketRequest:
+      type: object
+      properties:
+        assigneeId:
+          type: string
+          format: uuid
+      required:
+      - assigneeId
+    CreateUserRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          example: Bob Agent
+          maxLength: 120
+          minLength: 0
+        email:
+          type: string
+          format: email
+          example: bob@acme.com
+          maxLength: 254
+          minLength: 0
+        password:
+          type: string
+          example: Initial#123
+          maxLength: 72
+          minLength: 8
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+          example: AGENT
+      required:
+      - email
+      - fullName
+      - password
+      - role
+    UserDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    CreateTicketRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+          example: Cannot reset password
+          maxLength: 200
+          minLength: 3
+        description:
+          type: string
+          example: The reset email never arrives.
+          maxLength: 10000
+          minLength: 0
+        priority:
+          type: string
+          description: Defaults to MEDIUM
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - URGENT
+          example: HIGH
+        requesterId:
+          type: string
+          format: uuid
+          description: "Agents and admins only: raise the ticket on behalf of an active\
+            \ customer"
+      required:
+      - description
+      - subject
+    CreateCommentRequest:
+      type: object
+      properties:
+        body:
+          type: string
+          example: Any update?
+          maxLength: 5000
+          minLength: 0
+        visibility:
+          type: string
+          description: Defaults to PUBLIC. INTERNAL is staff only
+          enum:
+          - PUBLIC
+          - INTERNAL
+          example: PUBLIC
+      required:
+      - body
+    CommentAuthor:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+    CommentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        body:
+          type: string
+        visibility:
+          type: string
+          enum:
+          - PUBLIC
+          - INTERNAL
+        author:
+          $ref: "#/components/schemas/CommentAuthor"
+        createdAt:
+          type: string
+          format: date-time
+    RegisterOrganizationRequest:
+      type: object
+      properties:
+        organizationName:
+          type: string
+          example: Acme Corp
+          maxLength: 120
+          minLength: 2
+        organizationSlug:
+          type: string
+          description: "Lowercase letters, digits and dashes; 3–50 chars; used at\
+            \ login"
+          example: acme
+          minLength: 1
+          pattern: "^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$"
+        adminFullName:
+          type: string
+          example: Alice Admin
+          maxLength: 120
+          minLength: 0
+        adminEmail:
+          type: string
+          format: email
+          example: alice@acme.com
+          maxLength: 254
+          minLength: 0
+        adminPassword:
+          type: string
+          example: S3cure!pass
+          maxLength: 72
+          minLength: 8
+      required:
+      - adminEmail
+      - adminFullName
+      - adminPassword
+      - organizationName
+      - organizationSlug
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          format: int64
+          description: Seconds until the token expires
+          example: 3600
+        user:
+          $ref: "#/components/schemas/CurrentUserResponse"
+    CurrentUserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+        organization:
+          $ref: "#/components/schemas/OrganizationRef"
+    OrganizationRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+    LoginRequest:
+      type: object
+      properties:
+        organizationSlug:
+          type: string
+          example: acme
+          maxLength: 50
+          minLength: 0
+        email:
+          type: string
+          example: admin@acme.test
+          maxLength: 254
+          minLength: 0
+        password:
+          type: string
+          example: Password123!
+          maxLength: 72
+          minLength: 0
+      required:
+      - email
+      - organizationSlug
+      - password
+    UpdateUserRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+          example: Bob B. Agent
+          maxLength: 120
+          minLength: 1
+          pattern: .*\S.*
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+          example: ORG_ADMIN
+        active:
+          type: boolean
+          example: true
+        version:
+          type: integer
+          format: int64
+          example: 0
+      required:
+      - version
+    UpdateTicketRequest:
+      type: object
+      properties:
+        subject:
+          type: string
+          example: Password reset email not received
+          maxLength: 200
+          minLength: 3
+          pattern: (?s).*\S.*
+        description:
+          type: string
+          maxLength: 10000
+          minLength: 1
+          pattern: (?s).*\S.*
+        priority:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - URGENT
+          example: URGENT
+        version:
+          type: integer
+          format: int64
+          example: 3
+      required:
+      - version
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Acme Inc
+          maxLength: 120
+          minLength: 2
+      required:
+      - name
+    OrganizationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    PageMetadata:
+      type: object
+      properties:
+        number:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+          format: int32
+    PageResponseUserSummary:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserSummary"
+        page:
+          $ref: "#/components/schemas/PageMetadata"
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    PageResponseTicketSummary:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/TicketSummary"
+        page:
+          $ref: "#/components/schemas/PageMetadata"
+    TicketSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+          format: int64
+        subject:
+          type: string
+        status:
+          type: string
+          enum:
+          - OPEN
+          - IN_PROGRESS
+          - ON_HOLD
+          - RESOLVED
+          - CLOSED
+        priority:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - URGENT
+        requester:
+          $ref: "#/components/schemas/UserRef"
+        assignee:
+          $ref: "#/components/schemas/UserRef"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    UserRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+    HistoryEntryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum:
+          - CREATED
+          - STATUS_CHANGED
+          - ASSIGNEE_CHANGED
+          - PRIORITY_CHANGED
+        oldValue:
+          type: "null"
+          description: "A string (status / priority name), or a UserRef {id, fullName}\
+            \ for ASSIGNEE_CHANGED"
+          oneOf:
+          - type: string
+          - $ref: "#/components/schemas/UserRef"
+        newValue:
+          type: "null"
+          description: "A string (status / priority name), or a UserRef {id, fullName}\
+            \ for ASSIGNEE_CHANGED"
+          oneOf:
+          - type: string
+          - $ref: "#/components/schemas/UserRef"
+        actor:
+          $ref: "#/components/schemas/UserRef"
+        createdAt:
+          type: string
+          format: date-time
+    PageResponseCommentResponse:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentResponse"
+        page:
+          $ref: "#/components/schemas/PageMetadata"
+    TicketStats:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+          description: All tickets
+        unassigned:
+          type: integer
+          format: int64
+          description: Not closed and without an assignee
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: All tickets by status
+        byPriority:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: Not-closed tickets by priority
+    UserOption:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum:
+          - ORG_ADMIN
+          - AGENT
+          - CUSTOMER
+    Problem:
+      type: object
+      description: "RFC 7807 Problem Details, extended with code, traceId, timestamp\
+        \ and errors[]"
+      properties:
+        type:
+          type: string
+          example: https://helpdesk.local/problems/validation-failed
+        title:
+          type: string
+          example: Validation failed
+        status:
+          type: integer
+          format: int32
+          example: 400
+        detail:
+          type: string
+          example: Request has 1 invalid field
+        instance:
+          type: string
+          example: /api/v1/tickets
+        code:
+          type: string
+          enum:
+          - VALIDATION_FAILED
+          - MALFORMED_REQUEST
+          - INVALID_SORT
+          - INVALID_ASSIGNEE
+          - INVALID_REQUESTER
+          - UNAUTHENTICATED
+          - INVALID_CREDENTIALS
+          - ACCESS_DENIED
+          - RESOURCE_NOT_FOUND
+          - METHOD_NOT_ALLOWED
+          - UNSUPPORTED_MEDIA_TYPE
+          - INVALID_STATUS_TRANSITION
+          - TICKET_CLOSED
+          - CONCURRENT_MODIFICATION
+          - EMAIL_ALREADY_EXISTS
+          - SLUG_ALREADY_EXISTS
+          - LAST_ADMIN
+          - SELF_DEACTIVATION
+          - INTERNAL_ERROR
+          example: VALIDATION_FAILED
+        traceId:
+          type: string
+          example: 6f1c2a9e4b7d4c1a
+        timestamp:
+          type: string
+          format: date-time
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                example: subject
+              message:
+                type: string
+                example: size must be between 3 and 200
+              rejectedValue:
+                description: The rejected value (never echoed for passwords)
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

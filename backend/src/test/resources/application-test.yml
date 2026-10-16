@@ -1,0 +1,13 @@
+helpdesk:
+  jwt:
+    secret: test-only-secret-0123456789-abcdefghijklmnopqrstuvwxyz
+    ttl-minutes: 60
+  security:
+    bcrypt-strength: 4        # fast hashing in tests; production uses 12
+spring:
+  main:
+    banner-mode: off
+logging:
+  level:
+    com.helpdesk: INFO
+    org.testcontainers: WARN

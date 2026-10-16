@@ -1,0 +1,18 @@
+package com.helpdesk.security;
+
+import io.swagger.v3.oas.annotations.Parameter;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+
+/** Injects the {@link AuthenticatedUser} into a controller method. Hidden from the OpenAPI spec. */
+@Target(ElementType.PARAMETER)
+@Retention(RetentionPolicy.RUNTIME)
+@Documented
+@AuthenticationPrincipal
+@Parameter(hidden = true)
+public @interface CurrentUser {
+}

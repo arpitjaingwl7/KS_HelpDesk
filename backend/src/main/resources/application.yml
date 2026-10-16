@@ -1,0 +1,114 @@
+# Helpdesk API configuration. All environment-specific values come from environment variables (12-factor).
+spring:
+  application:
+    name: helpdesk
+  profiles:
+    default: dev
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/helpdesk}
+    username: ${DB_USERNAME:helpdesk}
+    password: ${DB_PASSWORD:helpdesk}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        timezone.default_storage: NORMALIZE_UTC
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: false   # unknown fields (e.g. "organizationId") are ignored, never bound
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: UTC
+  data:
+    web:
+      pageable:
+        default-page-size: 20
+        max-page-size: 100                 # larger values are capped, not rejected
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: Helpdesk API
+    version: '@project.version@'
+
+helpdesk:
+  jwt:
+    secret: ${JWT_SECRET:}                 # required, >= 32 bytes; the app refuses to start otherwise
+    ttl-minutes: ${JWT_TTL_MINUTES:60}
+    issuer: helpdesk
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  security:
+    bcrypt-strength: 12
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    persist-authorization: true
+  default-produces-media-type: application/json
+
+logging:
+  pattern:
+    level: "%5p [trace=%X{traceId:-} org=%X{orgId:-} user=%X{userId:-}]"
+  level:
+    root: INFO
+    com.helpdesk: INFO
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+helpdesk:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+logging:
+  level:
+    com.helpdesk: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+logging:
+  structured:
+    format:
+      console: ecs                        # JSON logs; MDC (traceId, orgId, userId) is included
+springdoc:
+  swagger-ui:
+    enabled: ${SWAGGER_UI_ENABLED:true}
